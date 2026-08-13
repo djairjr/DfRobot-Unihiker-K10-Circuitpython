@@ -1,0 +1,59 @@
+=============================================================================
+ANÁLISE COMPLETA: MADCTL 0x28 vs 0x88 no DFRobot Unihiker K10 (ILI9341)
+=============================================================================
+
+DISPLAY: ILI9341, 240x320 nativo (portrait), MY=1 por hardware (Y invertido)
+CÂMERA: GC2145, connected via SCCB (compartilha I2C com sensores)
+
+-----------------------------------------------------------------------------
+CASO 1: MADCTL = 0x28  (MV=1, MX=0, MY=0, BGR=1)
+-----------------------------------------------------------------------------
+- board.c: width=320, height=240, rotation=0
+- MV=1: CASET vira Y (linha), RASET vira X (coluna)
+- Display endereçado como 320(Y) × 240(X)
+- CASET(0, 319) → Y=0..319 = 320 linhas completas  ✓
+- RASET(0, 239) → X=0..239 = 240 colunas completas   ✓
+- Câmera QVGA (320×240) raw: row-major, 320px/linha
+- câmera row 0 (320px) → preenche Y=0..319 em X=0 (coluna completa!)
+- câmera row r → display column r
+- RESULTADO: tela completamente preenchida, cores corretas,
+  mas IMAGEM RODADA 90° (topo da imagem fica na lateral esquerda)
+- CAUSA: cada linha da câmera vira uma coluna no display (transposição)
+
+-----------------------------------------------------------------------------
+CASO 2: MADCTL = 0x88  (MV=0, MX=0, MY=1, BGR=1)  ← ATUAL, CORRETO
+-----------------------------------------------------------------------------
+- board.c: width=240, height=320, rotation=0
+- MV=0: CASET = X (coluna), RASET = Y (linha)
+- MY=1: Y incrementa de 0→319, mas hardware mapeia 0→319(bottom), 319→0(top)
+- CASET(0, 239) → X=0..239 = largura completa  ✓
+- RASET(80, 319) → Y=80..319 → hardware: 239→0 = topo da tela ✓
+- Câmera R240X240 (240×240): raw row-major, 240px/linha
+- Sem wrapping porque largura da câmera = largura do display ✓
+- vflip=False, hmirror=False → alinhamento perfeito ✓
+- RESULTADO: imagem alinhada corretamente, 240×240 no topo da tela
+- LIMITAÇÃO: não preenche a tela toda (só 240 de 320 linhas)
+
+-----------------------------------------------------------------------------
+PROBLEMA FUNDAMENTAL
+-----------------------------------------------------------------------------
+- Display nativo: 240 colunas × 320 linhas
+- Câmera QVGA: 320 colunas × 240 linhas
+
+Para preencher a tela toda com QVGA sem rotação, precisamos de UM dos:
+  (a) MV=1 + transposição de pixels no driver (hardware faz column-major)
+  (b) MV=0 + escalar ou ajustar CASET/RASET (320 não cabe em 240 colunas)
+  (c) Usar displayio pipeline (TileGrid + refresh) com rotation=90
+
+-----------------------------------------------------------------------------
+MADCTL BITS (ILI9341)
+-----------------------------------------------------------------------------
+Bit 7 (MY): 0=Y normal (top→bottom), 1=Y invertido (bottom→top)
+Bit 6 (MX): 0=X normal (left→right), 1=X invertido (right→left)
+Bit 5 (MV): 0=CASET=X, RASET=Y ; 1=CASET=Y, RASET=X
+Bit 4 (ML): RGB interface vertical refresh order
+Bit 3 (BGR): 0=RGB, 1=BGR
+Bit 2 (MH): RGB interface horizontal refresh order
+Bit 1-0: reservado
+
+=============================================================================
